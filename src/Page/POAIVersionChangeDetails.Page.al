@@ -6,7 +6,7 @@ using Microsoft.Purchases.Document;
 page 50102 "POAI Version Change Details"
 {
     ApplicationArea = All;
-    Caption = 'PO Version Change Details';
+    Caption = 'Purchase Order Version Change Details';
     DataCaptionExpression = PageCaptionExpr;
     DeleteAllowed = false;
     Editable = false;
@@ -283,11 +283,12 @@ page 50102 "POAI Version Change Details"
         RegenerateNotConfiguredMsg: Label 'Azure OpenAI is not configured or active. Showing deterministic summary.';
         PurchaseOrderNotFoundMsg: Label 'Purchase Order %1 is no longer open (it may have been posted or deleted).', Comment = '%1 = Document No.';
         ArchiveNotFoundMsg: Label 'Archived Version %1 of Purchase Order %2 could not be found.', Comment = '%1 = Version No., %2 = Document No.';
+        PageCaptionLbl: Label 'Purchase Order %1 - %2', Comment = '%1 = Document No., %2 = Current Version Label';
 
     local procedure LoadCalculatedFields()
     begin
         EffectiveSummaryText := Rec.GetEffectiveSummaryText();
-        PageCaptionExpr := StrSubstNo('%1 - %2', Rec."Document No.", Rec."Current Version Label");
+        PageCaptionExpr := StrSubstNo(PageCaptionLbl, Rec."Document No.", Rec."Current Version Label");
         HasLastError := Rec."Last Error Message" <> '';
         HasPreviousVersion := Rec."Previous Version No." > 0;
         CanRegenerateAI := Rec."Has Differences" and HasPreviousVersion;

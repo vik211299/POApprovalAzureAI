@@ -32,25 +32,33 @@ pageextension 50100 "POAI Requests to Approve Ext" extends "Requests to Approve"
                 end;
             }
         }
-
-        addafter(Change)
-        {
-            part(POAIVersionChangeFactBox; "POAI Version Change FactBox")
-            {
-                ApplicationArea = Suite;
-                Visible = ShowPOVersionFactBox;
-            }
-        }
     }
 
     actions
     {
+        modify(Approve)
+        {
+            trigger OnBeforeAction()
+            var
+                ApprovalReviewState: Codeunit "POAI Approval Review State";
+            begin
+                ApprovalReviewState.MarkRequestsToApproveContext();
+            end;
+
+            trigger OnAfterAction()
+            var
+                ApprovalReviewState: Codeunit "POAI Approval Review State";
+            begin
+                ApprovalReviewState.ClearRequestsToApproveContext();
+            end;
+        }
+
         addlast(Show)
         {
             action(POAIVersionChangeDetailsAction)
             {
                 ApplicationArea = Suite;
-                Caption = 'Version Changes';
+                Caption = 'Purchase Order Version Changes';
                 Enabled = IsPurchaseOrderSelected;
                 Image = ViewDetails;
                 Scope = Repeater;
@@ -129,8 +137,6 @@ pageextension 50100 "POAI Requests to Approve Ext" extends "Requests to Approve"
             (Rec."Document Type" = Rec."Document Type"::Order) and
             (Rec."Document No." <> '');
 
-        ShowPOVersionFactBox := CurrPage.POAIVersionChangeFactBox.Page.LoadFromApprovalEntry(Rec);
-
         HasDifferencesForCurrent := false;
         if IsPurchaseOrderSelected then
             if ApprovalSubscribers.TryGetSummaryForApprovalEntry(Rec, SummaryRec) then
@@ -141,7 +147,6 @@ pageextension 50100 "POAI Requests to Approve Ext" extends "Requests to Approve"
         VersionComparisonText: Text[50];
         ChangeSummaryText: Text[250];
         SummaryStyle: Text;
-        ShowPOVersionFactBox: Boolean;
         IsPurchaseOrderSelected: Boolean;
         HasDifferencesForCurrent: Boolean;
         NoSummaryForEntryErr: Label 'No Purchase Order version comparison is available for the selected approval entry.';

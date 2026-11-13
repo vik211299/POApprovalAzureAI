@@ -3,7 +3,7 @@ namespace DefaultPublisher.POAIApproval;
 page 50104 "POAI Change Detail Subform"
 {
     ApplicationArea = All;
-    Caption = 'Field & Line Change Breakdown';
+    Caption = 'Purchase Order Change Breakdown';
     DeleteAllowed = false;
     Editable = false;
     InsertAllowed = false;

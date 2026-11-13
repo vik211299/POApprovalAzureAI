@@ -39,6 +39,11 @@ codeunit 50102 "POAI Diff Engine"
         GridModifiedCntLbl: Label '%1 modified', Comment = '%1 = Count';
         GridDeletedCntLbl: Label '%1 deleted', Comment = '%1 = Count';
         GridCommentCntLbl: Label '%1 comment', Comment = '%1 = Count';
+        RichEmptySummaryLbl: Label 'No previous archived version comparison or changes were detected.';
+        RichHeaderColLbl: Label 'Header';
+        RichLineItemLbl: Label 'Line %1 - %2', Comment = '%1 = Line No., %2 = Item/Account No.';
+        RichLineOnlyLbl: Label 'Line %1', Comment = '%1 = Line No.';
+        RichAmtPctLbl: Label ' (%1%2%)', Locked = true;
 
     procedure ComputeAndStoreDiff(
         WorkflowStepInstanceId: Guid;
@@ -927,5 +932,237 @@ codeunit 50102 "POAI Diff Engine"
         end;
 
         exit(CopyStr(Parts.ToText(), 1, 250));
+    end;
+
+    procedure BuildDetailedRichSummaryHtml(SummaryRec: Record "POAI Approval Change Summary"): Text
+    var
+        ChangeDetail: Record "POAI Approval Change Detail";
+        Html: TextBuilder;
+        SummaryText: Text;
+        SourceLabel: Text;
+        VendorText: Text;
+        CurrencyText: Text;
+        BaselineText: Text;
+        SignPrefix: Text;
+        PctText: Text;
+        VarianceColor: Text;
+        VarianceText: Text;
+        BadgeColor: Text;
+        LocationText: Text;
+        ImpactText: Text;
+        RowIndex: Integer;
+        RowBgColor: Text;
+    begin
+        Html.Append('<div style="font-family:Segoe UI, Arial, sans-serif; font-size:13px; color:#323130; line-height:1.45;">');
+
+        // Overview Header Card
+        Html.Append('<div style="border:1px solid #d2d0ce; border-radius:4px; padding:10px 12px; margin-bottom:12px; background-color:#faf9f8;">');
+        Html.Append('<div style="font-size:15px; font-weight:600; color:#201f1e; margin-bottom:4px;">');
+        Html.Append('Purchase Order ' + HtmlEncode(SummaryRec."Document No.") + ' &mdash; ' + HtmlEncode(SummaryRec."Current Version Label"));
+        Html.Append('</div>');
+
+        if SummaryRec."Buy-from Vendor Name" <> '' then
+            VendorText := SummaryRec."Buy-from Vendor No." + ' - ' + SummaryRec."Buy-from Vendor Name"
+        else
+            VendorText := SummaryRec."Buy-from Vendor No.";
+
+        if SummaryRec."Currency Code" <> '' then
+            CurrencyText := SummaryRec."Currency Code"
+        else
+            CurrencyText := 'LCY';
+
+        if SummaryRec."Baseline Date Archived" <> 0D then
+            BaselineText := Format(SummaryRec."Baseline Date Archived") + ' (' + SummaryRec."Baseline Archived By" + ')'
+        else
+            BaselineText := '-';
+
+        Html.Append('<div style="font-size:12px; color:#605e5c; margin-bottom:8px;">');
+        Html.Append('<b>Vendor:</b> ' + HtmlEncode(VendorText) + ' &nbsp;|&nbsp; ');
+        Html.Append('<b>Currency:</b> ' + HtmlEncode(CurrencyText) + ' &nbsp;|&nbsp; ');
+        Html.Append('<b>Baseline Archived:</b> ' + HtmlEncode(BaselineText));
+        Html.Append('</div>');
+
+        if SummaryRec."Amount Variance" > 0 then begin
+            SignPrefix := '+';
+            VarianceColor := '#a4262c';
+        end else
+            if SummaryRec."Amount Variance" < 0 then
+                VarianceColor := '#107c10'
+            else
+                VarianceColor := '#323130';
+
+        if SummaryRec."Old Amount" <> 0 then
+            PctText := StrSubstNo(RichAmtPctLbl, SignPrefix, Round((SummaryRec."Amount Variance" / SummaryRec."Old Amount") * 100, 0.1));
+
+        VarianceText := SignPrefix + Format(SummaryRec."Amount Variance", 0, '<Precision,2:2><Standard Format,0>') + PctText;
+
+        // KPI Summary Table
+        Html.Append('<table style="border-collapse:collapse; width:100%; font-size:12px; background-color:#ffffff;">');
+        Html.Append('<thead><tr style="background-color:#f3f2f1; text-align:left;">');
+        Html.Append('<th style="border:1px solid #d2d0ce; padding:5px 8px;">Previous Amount</th>');
+        Html.Append('<th style="border:1px solid #d2d0ce; padding:5px 8px;">Current Amount</th>');
+        Html.Append('<th style="border:1px solid #d2d0ce; padding:5px 8px;">Net Variance</th>');
+        Html.Append('<th style="border:1px solid #d2d0ce; padding:5px 8px;">Incl. VAT (Old &rarr; New)</th>');
+        Html.Append('<th style="border:1px solid #d2d0ce; padding:5px 8px;">Change Counts</th>');
+        Html.Append('</tr></thead><tbody><tr>');
+        Html.Append('<td style="border:1px solid #d2d0ce; padding:5px 8px;">' + HtmlEncode(Format(SummaryRec."Old Amount", 0, '<Precision,2:2><Standard Format,0>')) + '</td>');
+        Html.Append('<td style="border:1px solid #d2d0ce; padding:5px 8px;"><b>' + HtmlEncode(Format(SummaryRec."New Amount", 0, '<Precision,2:2><Standard Format,0>')) + '</b></td>');
+        Html.Append('<td style="border:1px solid #d2d0ce; padding:5px 8px; font-weight:600; color:' + VarianceColor + ';">' + HtmlEncode(VarianceText) + '</td>');
+        Html.Append('<td style="border:1px solid #d2d0ce; padding:5px 8px;">' +
+            HtmlEncode(Format(SummaryRec."Old Amount Incl. VAT", 0, '<Precision,2:2><Standard Format,0>')) + ' &rarr; ' +
+            HtmlEncode(Format(SummaryRec."New Amount Incl. VAT", 0, '<Precision,2:2><Standard Format,0>')) + '</td>');
+        Html.Append('<td style="border:1px solid #d2d0ce; padding:5px 8px;">' +
+            'Hdr: ' + Format(SummaryRec."Header Changes Count") + ' | ' +
+            '+Added: ' + Format(SummaryRec."Lines Added Count") + ' | ' +
+            '~Mod: ' + Format(SummaryRec."Lines Modified Count") + ' | ' +
+            '-Del: ' + Format(SummaryRec."Lines Deleted Count") + ' | ' +
+            'Cmt: ' + Format(SummaryRec."Comments Changed Count") + '</td>');
+        Html.Append('</tr></tbody></table>');
+        Html.Append('</div>');
+
+        // Executive Summary Section
+        if SummaryRec."AI Status" = SummaryRec."AI Status"::Generated then
+            SourceLabel := 'AI Summary (Copilot)'
+        else
+            SourceLabel := 'Version Comparison Summary';
+
+        Html.Append('<div style="margin-bottom:12px;">');
+        Html.Append('<div style="font-size:14px; font-weight:600; color:#201f1e; border-bottom:1px solid #edebe9; padding-bottom:4px; margin-bottom:6px;">' + HtmlEncode(SourceLabel) + '</div>');
+
+        SummaryText := SummaryRec.GetEffectiveSummaryText();
+        if SummaryText <> '' then
+            Html.Append(FormatTextLinesAsHtml(SummaryText))
+        else
+            Html.Append('<p style="margin:4px 0; color:#605e5c;">' + HtmlEncode(RichEmptySummaryLbl) + '</p>');
+        Html.Append('</div>');
+
+        // Detailed Comparison Table
+        Html.Append('<div>');
+        Html.Append('<div style="font-size:14px; font-weight:600; color:#201f1e; border-bottom:1px solid #edebe9; padding-bottom:4px; margin-bottom:8px;">Detailed Field &amp; Line Changes</div>');
+
+        ChangeDetail.SetRange("Workflow Step Instance ID", SummaryRec."Workflow Step Instance ID");
+        if not ChangeDetail.FindSet() then begin
+            Html.Append('<p style="margin:4px 0; color:#605e5c;">' + HtmlEncode(RichEmptySummaryLbl) + '</p>');
+            Html.Append('</div></div>');
+            exit(Html.ToText());
+        end;
+
+        Html.Append('<table style="border-collapse:collapse; width:100%; font-size:12px;">');
+        Html.Append('<thead><tr style="background-color:#f3f2f1; text-align:left;">');
+        Html.Append('<th style="border:1px solid #d2d0ce; padding:6px 8px;">Change Type</th>');
+        Html.Append('<th style="border:1px solid #d2d0ce; padding:6px 8px;">Scope / Line</th>');
+        Html.Append('<th style="border:1px solid #d2d0ce; padding:6px 8px;">Field</th>');
+        Html.Append('<th style="border:1px solid #d2d0ce; padding:6px 8px;">Previous Value</th>');
+        Html.Append('<th style="border:1px solid #d2d0ce; padding:6px 8px;">New Value</th>');
+        Html.Append('<th style="border:1px solid #d2d0ce; padding:6px 8px; text-align:right;">Amount Impact</th>');
+        Html.Append('</tr></thead><tbody>');
+
+        repeat
+            RowIndex += 1;
+            if (RowIndex mod 2) = 0 then
+                RowBgColor := '#faf9f8'
+            else
+                RowBgColor := '#ffffff';
+
+            case ChangeDetail."Change Type" of
+                ChangeDetail."Change Type"::"Line Added":
+                    BadgeColor := '#107c10';
+                ChangeDetail."Change Type"::"Line Deleted":
+                    BadgeColor := '#a4262c';
+                ChangeDetail."Change Type"::"Line Modified", ChangeDetail."Change Type"::"Header Modified":
+                    BadgeColor := '#0078d4';
+                else
+                    BadgeColor := '#605e5c';
+            end;
+
+            if ChangeDetail."Line No." = 0 then
+                LocationText := RichHeaderColLbl
+            else
+                if ChangeDetail."Item / Account No." <> '' then
+                    LocationText := StrSubstNo(RichLineItemLbl, ChangeDetail."Line No.", ChangeDetail."Item / Account No.")
+                else
+                    LocationText := StrSubstNo(RichLineOnlyLbl, ChangeDetail."Line No.");
+
+            if ChangeDetail."Line Description" <> '' then
+                LocationText := LocationText + ' (' + ChangeDetail."Line Description" + ')';
+
+            if ChangeDetail."Amount Impact" <> 0 then begin
+                if ChangeDetail."Amount Impact" > 0 then
+                    ImpactText := '+' + Format(ChangeDetail."Amount Impact", 0, '<Precision,2:2><Standard Format,0>')
+                else
+                    ImpactText := Format(ChangeDetail."Amount Impact", 0, '<Precision,2:2><Standard Format,0>');
+            end else
+                ImpactText := '-';
+
+            Html.Append('<tr style="background-color:' + RowBgColor + ';">');
+            Html.Append('<td style="border:1px solid #d2d0ce; padding:6px 8px; font-weight:600; color:' + BadgeColor + '; white-space:nowrap;">' +
+                HtmlEncode(Format(ChangeDetail."Change Type")) + '</td>');
+            Html.Append('<td style="border:1px solid #d2d0ce; padding:6px 8px;">' + HtmlEncode(LocationText) + '</td>');
+            Html.Append('<td style="border:1px solid #d2d0ce; padding:6px 8px;">' + HtmlEncode(ChangeDetail."Field Caption") + '</td>');
+            Html.Append('<td style="border:1px solid #d2d0ce; padding:6px 8px;">' + HtmlEncode(ChangeDetail."Old Value") + '</td>');
+            Html.Append('<td style="border:1px solid #d2d0ce; padding:6px 8px;"><b>' + HtmlEncode(ChangeDetail."New Value") + '</b></td>');
+            Html.Append('<td style="border:1px solid #d2d0ce; padding:6px 8px; text-align:right; white-space:nowrap;">' + HtmlEncode(ImpactText) + '</td>');
+            Html.Append('</tr>');
+        until ChangeDetail.Next() = 0;
+
+        Html.Append('</tbody></table>');
+        Html.Append('</div></div>');
+        exit(Html.ToText());
+    end;
+
+    local procedure HtmlEncode(InputText: Text): Text
+    begin
+        if InputText = '' then
+            exit('');
+        InputText := InputText.Replace('&', '&amp;');
+        InputText := InputText.Replace('<', '&lt;');
+        InputText := InputText.Replace('>', '&gt;');
+        InputText := InputText.Replace('"', '&quot;');
+        exit(InputText);
+    end;
+
+    local procedure FormatTextLinesAsHtml(SourceText: Text): Text
+    var
+        Lines: List of [Text];
+        LineText: Text;
+        TrimmedLine: Text;
+        Builder: TextBuilder;
+        InList: Boolean;
+        LfChar: Char;
+        CrChar: Char;
+    begin
+        CrChar := 13;
+        LfChar := 10;
+        SourceText := SourceText.Replace(Format(CrChar) + Format(LfChar), Format(LfChar));
+        SourceText := SourceText.Replace(Format(CrChar), Format(LfChar));
+        Lines := SourceText.Split(LfChar);
+
+        foreach LineText in Lines do begin
+            TrimmedLine := DelChr(LineText, '<>', ' ');
+            if TrimmedLine = '' then begin
+                if InList then begin
+                    Builder.Append('</ul>');
+                    InList := false;
+                end;
+            end else
+                if TrimmedLine.StartsWith('- ') or TrimmedLine.StartsWith('* ') then begin
+                    if not InList then begin
+                        Builder.Append('<ul style="margin:4px 0 6px 18px; padding:0;">');
+                        InList := true;
+                    end;
+                    Builder.Append('<li style="margin:2px 0;">' + HtmlEncode(DelChr(CopyStr(TrimmedLine, 3), '<', ' ')) + '</li>');
+                end else begin
+                    if InList then begin
+                        Builder.Append('</ul>');
+                        InList := false;
+                    end;
+                    Builder.Append('<p style="margin:4px 0;">' + HtmlEncode(TrimmedLine) + '</p>');
+                end;
+        end;
+
+        if InList then
+            Builder.Append('</ul>');
+
+        exit(Builder.ToText());
     end;
 }

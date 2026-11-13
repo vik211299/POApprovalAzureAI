@@ -3,12 +3,12 @@ namespace DefaultPublisher.POAIApproval;
 page 50103 "POAI Change Summary Prompt"
 {
     ApplicationArea = All;
-    Caption = 'Ask Copilot About PO Changes';
+    Caption = 'Purchase Order Version Change Summary';
     DataCaptionExpression = DialogCaption;
     Extensible = false;
     IsPreview = true;
     PageType = PromptDialog;
-    PromptMode = Prompt;
+    PromptMode = Content;
 
     layout
     {
@@ -24,7 +24,7 @@ page 50103 "POAI Change Summary Prompt"
             field(UserQuestion; UserQuestion)
             {
                 ApplicationArea = All;
-                Caption = 'Ask a question about these PO changes';
+                Caption = 'Ask a question about these Purchase Order changes';
                 InstructionalText = 'Example: "Why did the total amount increase?" or "List all unit cost, quantity, or delivery date changes."';
                 MultiLine = true;
                 ToolTip = 'Enter a question about the differences between the previous archived version and this Purchase Order revision.';
@@ -33,35 +33,25 @@ page 50103 "POAI Change Summary Prompt"
 
         area(Content)
         {
-            group(OverviewGroup)
+            group(DetailedRichSummaryGroup)
             {
-                Caption = 'Comparison Context';
+                ShowCaption = false;
 
-                field(DocumentNoField; DocumentNoTxt)
+                field(DetailedSummaryRichField; DetailedRichSummaryHtml)
                 {
                     ApplicationArea = All;
-                    Caption = 'Purchase Order No.';
+                    Caption = 'Detailed Summary';
                     Editable = false;
-                    ToolTip = 'Specifies the Purchase Order number.';
-                }
-                field(VersionLabelField; VersionLabelTxt)
-                {
-                    ApplicationArea = All;
-                    Caption = 'Version Comparison';
-                    Editable = false;
-                    ToolTip = 'Specifies the version comparison context.';
-                }
-                field(AmountImpactField; AmountImpactTxt)
-                {
-                    ApplicationArea = All;
-                    Caption = 'Net Amount Impact';
-                    Editable = false;
-                    ToolTip = 'Specifies the net amount change compared to the previous archived version.';
+                    ExtendedDatatype = RichContent;
+                    MultiLine = true;
+                    ShowCaption = false;
+                    ToolTip = 'Displays the detailed Purchase Order version change summary and comparison table in rich text format.';
                 }
             }
             group(AnswerGroup)
             {
                 Caption = 'Copilot Answer';
+                Visible = HasCopilotAnswer;
 
                 field(CopilotAnswerField; CopilotAnswer)
                 {
@@ -70,19 +60,6 @@ page 50103 "POAI Change Summary Prompt"
                     MultiLine = true;
                     ShowCaption = false;
                     ToolTip = 'Displays the AI answer grounded in the Purchase Order diff payload.';
-                }
-            }
-            group(PrecomputedSummaryGroup)
-            {
-                Caption = 'Recorded Version Change Summary';
-
-                field(ExistingSummaryField; ExistingSummaryText)
-                {
-                    ApplicationArea = All;
-                    Editable = false;
-                    MultiLine = true;
-                    ShowCaption = false;
-                    ToolTip = 'Displays the precomputed summary of changes for this approval request.';
                 }
             }
         }
@@ -156,47 +133,73 @@ page 50103 "POAI Change Summary Prompt"
             }
             systemaction(Ok)
             {
-                Caption = 'Close';
-                ToolTip = 'Close the Copilot dialog.';
+                Caption = 'Keep it';
+                ToolTip = 'Proceed with approving this Purchase Order (when reviewing approval) or close the dialog.';
             }
             systemaction(Cancel)
             {
-                ToolTip = 'Dismiss the Copilot dialog.';
+                Caption = 'Discard';
+                ToolTip = 'Close without approving or rejecting the Purchase Order.';
             }
         }
     }
 
+    trigger OnOpenPage()
+    begin
+        if SummaryLoaded then
+            CurrPage.PromptMode := PromptMode::Content;
+    end;
+
     var
         CurrentSummary: Record "POAI Approval Change Summary";
-        DocumentNoTxt: Code[20];
-        VersionLabelTxt: Text[50];
         UserQuestion: Text;
         LastAskedQuestion: Text;
         CopilotAnswer: Text;
         ExistingSummaryText: Text;
+        DetailedRichSummaryHtml: Text;
         DiffJsonText: Text;
         DocumentContextTxt: Text;
-        AmountImpactTxt: Text;
         DialogCaption: Text;
+        SummaryLoaded: Boolean;
+        HasCopilotAnswer: Boolean;
         NoSummaryLoadedErr: Label 'No Purchase Order version comparison record is loaded.';
         NoDiffAvailableErr: Label 'No version comparison differences exist for %1 (%2).', Comment = '%1 = PO No., %2 = Version Label';
         AnalyzingMsg: Label 'Analyzing Purchase Order version changes with Copilot...';
         DefaultQuestionTxt: Label 'Provide an executive approval briefing summarizing financial variance, top line changes, header/terms changes, and potential risks.';
-        AINotReadyErr: Label 'Azure OpenAI is not configured or the Copilot capability is inactive. Configure PO Approval Copilot Setup first, or review the deterministic breakdown on Version Change Details.';
-        DialogCaptionLbl: Label 'PO %1 - %2', Comment = '%1 = PO No., %2 = Version Label';
+        AINotReadyErr: Label 'Azure OpenAI is not configured or the Copilot capability is inactive. Configure Purchase Order Approval Copilot Setup first, or review the deterministic breakdown on Version Change Details.';
+        DialogCaptionLbl: Label 'Purchase Order %1 - %2', Comment = '%1 = Purchase Order No., %2 = Version Label';
+        ApprovalReviewCaptionLbl: Label 'Review Changes Before Approving: Purchase Order %1 - %2', Comment = '%1 = Purchase Order No., %2 = Version Label';
         AmountImpactLbl: Label '%1 -> %2 (%3%4)', Locked = true;
-        DocumentContextLbl: Label 'PO %1 | %2 | Amount: %3', Comment = '%1 = PO No., %2 = Version Label, %3 = Amount Impact';
+        DocumentContextLbl: Label 'Purchase Order %1 | %2 | Amount: %3', Comment = '%1 = Purchase Order No., %2 = Version Label, %3 = Amount Impact';
 
     procedure LoadSummary(SummaryRec: Record "POAI Approval Change Summary")
+    begin
+        LoadSummaryInternal(SummaryRec, false);
+    end;
+
+    procedure LoadSummaryForApprovalReview(SummaryRec: Record "POAI Approval Change Summary")
+    begin
+        LoadSummaryInternal(SummaryRec, true);
+    end;
+
+    local procedure LoadSummaryInternal(SummaryRec: Record "POAI Approval Change Summary"; IsApprovalReview: Boolean)
     var
+        DiffEngine: Codeunit "POAI Diff Engine";
         SignPrefix: Text;
+        AmountImpactTxt: Text;
     begin
         CurrentSummary := SummaryRec;
-        DocumentNoTxt := CurrentSummary."Document No.";
-        VersionLabelTxt := CurrentSummary."Current Version Label";
+        SummaryLoaded := true;
+        HasCopilotAnswer := false;
+        Clear(CopilotAnswer);
         ExistingSummaryText := CurrentSummary.GetEffectiveSummaryText();
         DiffJsonText := CurrentSummary.GetDiffPayloadJson();
-        DialogCaption := StrSubstNo(DialogCaptionLbl, CurrentSummary."Document No.", CurrentSummary."Current Version Label");
+        DetailedRichSummaryHtml := DiffEngine.BuildDetailedRichSummaryHtml(CurrentSummary);
+
+        if IsApprovalReview then
+            DialogCaption := StrSubstNo(ApprovalReviewCaptionLbl, CurrentSummary."Document No.", CurrentSummary."Current Version Label")
+        else
+            DialogCaption := StrSubstNo(DialogCaptionLbl, CurrentSummary."Document No.", CurrentSummary."Current Version Label");
 
         if CurrentSummary."Amount Variance" > 0 then
             SignPrefix := '+';
@@ -252,5 +255,7 @@ page 50103 "POAI Change Summary Prompt"
             Error(ErrText);
 
         CopilotAnswer := Answer;
+        HasCopilotAnswer := CopilotAnswer <> '';
+        CurrPage.Update(false);
     end;
 }

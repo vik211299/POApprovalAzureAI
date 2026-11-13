@@ -9,8 +9,78 @@ codeunit 50104 "POAI Approval Subscribers"
     Access = Public;
     Permissions = tabledata "POAI Copilot Setup" = ri,
                   tabledata "Purchase Header" = r,
+                  tabledata "Purchase Header Archive" = r,
                   tabledata "POAI Approval Change Summary" = rimd,
                   tabledata "POAI Approval Change Detail" = rimd;
+
+    var
+        CompareChangesConfirmQst: Label 'Do you want to compare changes occurred from previous version?';
+
+    [EventSubscriber(ObjectType::Codeunit, Codeunit::"Approvals Mgmt.", 'OnBeforeApproveApprovalRequests', '', false, false)]
+    local procedure OnBeforeApproveApprovalRequests(var ApprovalEntry: Record "Approval Entry"; var IsHandled: Boolean)
+    var
+        ApprovalEntryFilter: Record "Approval Entry";
+        PurchaseHeader: Record "Purchase Header";
+        LatestArchHeader: Record "Purchase Header Archive";
+        SummaryRec: Record "POAI Approval Change Summary";
+        ApprovalReviewState: Codeunit "POAI Approval Review State";
+        ArchiveHandler: Codeunit "POAI Version Archive Handler";
+        PromptPage: Page "POAI Change Summary Prompt";
+        HasSummary: Boolean;
+        HasPreviousArchive: Boolean;
+    begin
+        if IsHandled then
+            exit;
+
+        if not ApprovalReviewState.ConsumeRequestsToApproveContext() then
+            exit;
+
+        if not GuiAllowed() then
+            exit;
+
+        ApprovalEntryFilter.Copy(ApprovalEntry);
+        if ApprovalEntryFilter.Count() <> 1 then
+            exit;
+        if not ApprovalEntryFilter.FindFirst() then
+            exit;
+        if ApprovalEntryFilter."Table ID" <> Database::"Purchase Header" then
+            exit;
+        if ApprovalEntryFilter."Document Type" <> ApprovalEntryFilter."Document Type"::Order then
+            exit;
+        if ApprovalEntryFilter.Status <> ApprovalEntryFilter.Status::Open then
+            exit;
+
+        // Read-only check first so Confirm/RunModal never executes inside an open write transaction.
+        HasSummary := TryGetSummaryForApprovalEntry(ApprovalEntryFilter, SummaryRec);
+        if HasSummary then
+            HasPreviousArchive := SummaryRec."Previous Version No." > 0
+        else begin
+            if not PurchaseHeader.Get(Enum::"Purchase Document Type"::Order, ApprovalEntryFilter."Document No.") then
+                exit;
+            HasPreviousArchive := ArchiveHandler.FindLatestArchivedVersion(PurchaseHeader, LatestArchHeader);
+        end;
+
+        if not HasPreviousArchive then
+            exit;
+
+        if not Confirm(CompareChangesConfirmQst, true) then
+            exit;
+
+        if not HasSummary then begin
+            if IsNullGuid(ApprovalEntryFilter."Workflow Step Instance ID") then
+                exit;
+            if not PurchaseHeader.Get(Enum::"Purchase Document Type"::Order, ApprovalEntryFilter."Document No.") then
+                exit;
+            GenerateChangeSummaryForPurchaseOrder(ApprovalEntryFilter."Workflow Step Instance ID", PurchaseHeader);
+            Commit();
+            if not SummaryRec.Get(ApprovalEntryFilter."Workflow Step Instance ID") then
+                exit;
+        end;
+
+        PromptPage.LoadSummaryForApprovalReview(SummaryRec);
+        if PromptPage.RunModal() <> Action::OK then
+            IsHandled := true;
+    end;
 
     [EventSubscriber(ObjectType::Codeunit, Codeunit::"Approvals Mgmt.", 'OnCreateApprovalRequestsOnAfterCreateRequests', '', false, false)]
     local procedure OnCreateApprovalRequestsOnAfterCreateRequests(RecRef: RecordRef; WorkflowStepArgument: Record "Workflow Step Argument"; var ApprovalEntryArgument: Record "Approval Entry")
@@ -88,10 +158,11 @@ codeunit 50104 "POAI Approval Subscribers"
         ShortSummary: Text[250];
         DetailedAISummary: Text;
     begin
-        if ((SummaryRec.GetDiffPayloadJson() = '') or
-            (PurchaseHeader.Get(SummaryRec."Document Type", SummaryRec."Document No.") and
-             (PurchaseHeader.Status = PurchaseHeader.Status::"Pending Approval"))) and
-           PurchaseHeader.Get(SummaryRec."Document Type", SummaryRec."Document No.")
+        if PurchaseHeader.Get(SummaryRec."Document Type", SummaryRec."Document No.") and
+           ((SummaryRec.GetDiffPayloadJson() = '') or
+            (PurchaseHeader.Status = PurchaseHeader.Status::"Pending Approval") or
+            ((PurchaseHeader.Status = PurchaseHeader.Status::Open) and
+             (SummaryRec."Workflow Step Instance ID" = PurchaseHeader.SystemId)))
         then begin
             GenerateChangeSummaryForPurchaseOrder(SummaryRec."Workflow Step Instance ID", PurchaseHeader);
             SummaryRec.Get(SummaryRec."Workflow Step Instance ID");

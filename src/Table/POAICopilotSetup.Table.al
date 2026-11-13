@@ -2,7 +2,7 @@ namespace DefaultPublisher.POAIApproval;
 
 table 50100 "POAI Copilot Setup"
 {
-    Caption = 'PO Approval Copilot Setup';
+    Caption = 'Purchase Order Approval Copilot Setup';
     DataClassification = SystemMetadata;
     Access = Public;
 

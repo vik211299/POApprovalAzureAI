@@ -1,13 +1,17 @@
 namespace DefaultPublisher.POAIApproval;
 
+using Microsoft.Purchases.Archive;
 using Microsoft.Purchases.Document;
 using System.Automation;
 
 page 50101 "POAI Version Change FactBox"
 {
     ApplicationArea = All;
-    Caption = 'PO Version Changes';
+    Caption = 'Purchase Order Version Changes';
     PageType = CardPart;
+    Permissions = tabledata "Approval Entry" = r,
+                  tabledata "POAI Approval Change Summary" = r,
+                  tabledata "Purchase Header Archive" = r;
 
     layout
     {
@@ -107,17 +111,36 @@ page 50101 "POAI Version Change FactBox"
                 var
                     PurchaseHeader: Record "Purchase Header";
                     ApprovalSubscribers: Codeunit "POAI Approval Subscribers";
+                    TargetWorkflowStepId: Guid;
                 begin
-                    if HasSummaryRecord then
-                        ApprovalSubscribers.RegenerateAISummary(CurrentSummary)
-                    else
-                        if PurchaseHeader.Get(Enum::"Purchase Document Type"::Order, CurrentApprovalEntry."Document No.") and
-                           (not IsNullGuid(CurrentApprovalEntry."Workflow Step Instance ID"))
-                        then
-                            ApprovalSubscribers.GenerateChangeSummaryForPurchaseOrder(
-                                CurrentApprovalEntry."Workflow Step Instance ID", PurchaseHeader);
+                    if LoadedFromPurchaseOrder then begin
+                        if IsNullGuid(CurrentApprovalEntry."Workflow Step Instance ID") then
+                            TargetWorkflowStepId := CurrentPurchaseHeader.SystemId
+                        else
+                            TargetWorkflowStepId := CurrentApprovalEntry."Workflow Step Instance ID";
 
-                    LoadFromApprovalEntry(CurrentApprovalEntry);
+                        if HasSummaryRecord then
+                            ApprovalSubscribers.RegenerateAISummary(CurrentSummary)
+                        else
+                            if (not IsNullGuid(TargetWorkflowStepId)) and
+                               PurchaseHeader.Get(CurrentPurchaseHeader."Document Type", CurrentPurchaseHeader."No.")
+                            then
+                                ApprovalSubscribers.GenerateChangeSummaryForPurchaseOrder(TargetWorkflowStepId, PurchaseHeader);
+
+                        if PurchaseHeader.Get(CurrentPurchaseHeader."Document Type", CurrentPurchaseHeader."No.") then
+                            LoadFromPurchaseHeader(PurchaseHeader);
+                    end else begin
+                        if HasSummaryRecord then
+                            ApprovalSubscribers.RegenerateAISummary(CurrentSummary)
+                        else
+                            if PurchaseHeader.Get(Enum::"Purchase Document Type"::Order, CurrentApprovalEntry."Document No.") and
+                               (not IsNullGuid(CurrentApprovalEntry."Workflow Step Instance ID"))
+                            then
+                                ApprovalSubscribers.GenerateChangeSummaryForPurchaseOrder(
+                                    CurrentApprovalEntry."Workflow Step Instance ID", PurchaseHeader);
+
+                        LoadFromApprovalEntry(CurrentApprovalEntry);
+                    end;
                 end;
             }
         }
@@ -125,6 +148,7 @@ page 50101 "POAI Version Change FactBox"
 
     var
         CurrentApprovalEntry: Record "Approval Entry";
+        CurrentPurchaseHeader: Record "Purchase Header";
         CurrentSummary: Record "POAI Approval Change Summary";
         VersionLabelTxt: Text[50];
         AmountImpactTxt: Text[100];
@@ -132,30 +156,25 @@ page 50101 "POAI Version Change FactBox"
         AIStatusTxt: Text[50];
         SummaryBodyTxt: Text;
         AmountStyle: Text;
+        LoadedFromPurchaseOrder: Boolean;
         HasSummaryRecord: Boolean;
         HasDifferences: Boolean;
         CanComputeOrRegenerate: Boolean;
         NotCapturedLabelTxt: Label 'Not captured';
         NotCapturedBodyTxt: Label 'No change summary has been captured for this approval request yet. Choose Refresh / Regenerate Summary to compare the current PO against the latest archived version.';
+        DraftComparisonLbl: Label 'Current vs v%1', Comment = '%1 = Archived Version No.';
+        DraftNotCapturedBodyTxt: Label 'Archived Version %1 exists. Choose Refresh / Regenerate Summary to compare current changes against the archived version before sending for approval.', Comment = '%1 = Archived Version No.';
         AmountImpactLbl: Label '%1 -> %2 (%3%4)', Locked = true;
         ChangeCountsLbl: Label 'Hdr %1 | +%2 | ~%3 | -%4', Comment = '%1 = Header changes, %2 = Lines added, %3 = Lines modified, %4 = Lines deleted';
 
     procedure LoadFromApprovalEntry(ApprovalEntry: Record "Approval Entry"): Boolean
     var
         ApprovalSubscribers: Codeunit "POAI Approval Subscribers";
-        SignPrefix: Text;
     begin
+        ResetFactBoxState();
+        LoadedFromPurchaseOrder := false;
         CurrentApprovalEntry := ApprovalEntry;
-        Clear(CurrentSummary);
-        Clear(VersionLabelTxt);
-        Clear(AmountImpactTxt);
-        Clear(ChangeCountsTxt);
-        Clear(AIStatusTxt);
-        Clear(SummaryBodyTxt);
-        AmountStyle := 'Standard';
-        HasSummaryRecord := false;
-        HasDifferences := false;
-        CanComputeOrRegenerate := false;
+        Clear(CurrentPurchaseHeader);
 
         if (ApprovalEntry."Table ID" <> Database::"Purchase Header") or
            (ApprovalEntry."Document Type" <> ApprovalEntry."Document Type"::Order) or
@@ -173,6 +192,107 @@ page 50101 "POAI Version Change FactBox"
             exit(true);
         end;
 
+        ApplySummaryRecord();
+        CurrPage.Update(false);
+        exit(true);
+    end;
+
+    procedure LoadFromPurchaseHeader(PurchaseHeader: Record "Purchase Header"): Boolean
+    var
+        ApprovalEntry: Record "Approval Entry";
+        SummaryLookup: Record "POAI Approval Change Summary";
+        LatestArchHeader: Record "Purchase Header Archive";
+        ApprovalSubscribers: Codeunit "POAI Approval Subscribers";
+        ArchiveHandler: Codeunit "POAI Version Archive Handler";
+    begin
+        ResetFactBoxState();
+        LoadedFromPurchaseOrder := true;
+        CurrentPurchaseHeader := PurchaseHeader;
+        Clear(CurrentApprovalEntry);
+
+        if (PurchaseHeader."Document Type" <> PurchaseHeader."Document Type"::Order) or
+           (PurchaseHeader."No." = '')
+        then begin
+            CurrPage.Update(false);
+            exit(false);
+        end;
+
+        // 1. Prefer the summary tied to an active Open Approval Entry on this Purchase Order.
+        ApprovalEntry.ReadIsolation := IsolationLevel::ReadUncommitted;
+        ApprovalEntry.SetRange("Record ID to Approve", PurchaseHeader.RecordId);
+        ApprovalEntry.SetRange(Status, ApprovalEntry.Status::Open);
+        if ApprovalEntry.FindLast() then begin
+            CurrentApprovalEntry := ApprovalEntry;
+            if ApprovalSubscribers.TryGetSummaryForApprovalEntry(ApprovalEntry, CurrentSummary) then begin
+                ApplySummaryRecord();
+                CurrPage.Update(false);
+                exit(true);
+            end;
+
+            VersionLabelTxt := NotCapturedLabelTxt;
+            SummaryBodyTxt := NotCapturedBodyTxt;
+            CanComputeOrRegenerate := not IsNullGuid(ApprovalEntry."Workflow Step Instance ID");
+            CurrPage.Update(false);
+            exit(true);
+        end;
+
+        // 2. When Released, show the latest recorded approval summary for this Purchase Order if present.
+        if PurchaseHeader.Status = PurchaseHeader.Status::Released then begin
+            SummaryLookup.ReadIsolation := IsolationLevel::ReadUncommitted;
+            SummaryLookup.SetCurrentKey("Document Type", "Document No.", "Generated DateTime");
+            SummaryLookup.SetRange("Document Type", PurchaseHeader."Document Type");
+            SummaryLookup.SetRange("Document No.", PurchaseHeader."No.");
+            if SummaryLookup.FindLast() then begin
+                CurrentSummary := SummaryLookup;
+                ApplySummaryRecord();
+                CurrPage.Update(false);
+                exit(true);
+            end;
+        end;
+
+        // 3. Otherwise, show preview comparison when an archived version exists for this Purchase Order.
+        if ArchiveHandler.FindLatestArchivedVersion(PurchaseHeader, LatestArchHeader) then begin
+            SummaryLookup.ReadIsolation := IsolationLevel::ReadUncommitted;
+            if (not IsNullGuid(PurchaseHeader.SystemId)) and
+               SummaryLookup.Get(PurchaseHeader.SystemId) and
+               (SummaryLookup."Previous Version No." = LatestArchHeader."Version No.")
+            then begin
+                CurrentSummary := SummaryLookup;
+                ApplySummaryRecord();
+                CanComputeOrRegenerate := true;
+                CurrPage.Update(false);
+                exit(true);
+            end;
+
+            VersionLabelTxt := CopyStr(StrSubstNo(DraftComparisonLbl, LatestArchHeader."Version No."), 1, MaxStrLen(VersionLabelTxt));
+            SummaryBodyTxt := StrSubstNo(DraftNotCapturedBodyTxt, LatestArchHeader."Version No.");
+            CanComputeOrRegenerate := not IsNullGuid(PurchaseHeader.SystemId);
+            CurrPage.Update(false);
+            exit(true);
+        end;
+
+        CurrPage.Update(false);
+        exit(false);
+    end;
+
+    local procedure ResetFactBoxState()
+    begin
+        Clear(CurrentSummary);
+        Clear(VersionLabelTxt);
+        Clear(AmountImpactTxt);
+        Clear(ChangeCountsTxt);
+        Clear(AIStatusTxt);
+        Clear(SummaryBodyTxt);
+        AmountStyle := 'Standard';
+        HasSummaryRecord := false;
+        HasDifferences := false;
+        CanComputeOrRegenerate := false;
+    end;
+
+    local procedure ApplySummaryRecord()
+    var
+        SignPrefix: Text;
+    begin
         HasSummaryRecord := true;
         HasDifferences := CurrentSummary."Has Differences" and (CurrentSummary."Previous Version No." > 0);
         CanComputeOrRegenerate := HasDifferences;
@@ -205,7 +325,5 @@ page 50101 "POAI Version Change FactBox"
         end;
 
         SummaryBodyTxt := CurrentSummary.GetEffectiveSummaryText();
-        CurrPage.Update(false);
-        exit(true);
     end;
 }

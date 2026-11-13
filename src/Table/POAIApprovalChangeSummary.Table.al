@@ -5,7 +5,7 @@ using Microsoft.Purchases.Document;
 
 table 50101 "POAI Approval Change Summary"
 {
-    Caption = 'PO Approval Change Summary';
+    Caption = 'Purchase Order Approval Change Summary';
     DataClassification = CustomerContent;
     LookupPageId = "POAI Version Change Details";
     DrillDownPageId = "POAI Version Change Details";

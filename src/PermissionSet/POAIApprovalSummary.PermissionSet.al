@@ -10,7 +10,7 @@ using System.Reflection;
 permissionset 50100 "POAIApprovalSummary"
 {
     Assignable = true;
-    Caption = 'PO Approval Change Summary';
+    Caption = 'Purchase Order Approval Change Summary';
 
     Permissions =
         tabledata "POAI Copilot Setup" = RIMD,
@@ -33,6 +33,7 @@ permissionset 50100 "POAIApprovalSummary"
         codeunit "POAI Diff Engine" = X,
         codeunit "POAI AI Summary Helper" = X,
         codeunit "POAI Approval Subscribers" = X,
+        codeunit "POAI Approval Review State" = X,
         page "POAI Copilot Setup" = X,
         page "POAI Version Change FactBox" = X,
         page "POAI Version Change Details" = X,

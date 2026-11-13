@@ -4,8 +4,9 @@ using System.AI;
 
 page 50100 "POAI Copilot Setup"
 {
+    AdditionalSearchTerms = 'PO Copilot, PO AI, Purchase Order Approval, Version Changes, PO Setup';
     ApplicationArea = All;
-    Caption = 'PO Approval Copilot Setup';
+    Caption = 'Purchase Order Approval Copilot Setup';
     DeleteAllowed = false;
     InsertAllowed = false;
     PageType = Card;
@@ -116,7 +117,7 @@ page 50100 "POAI Copilot Setup"
                 ApplicationArea = All;
                 Caption = 'Register / Sync Copilot Capability';
                 Image = Sparkle;
-                ToolTip = 'Registers or updates the PO Approval Change Summary Copilot capability in Business Central.';
+                ToolTip = 'Registers or updates the Purchase Order Approval Change Summary Copilot capability in Business Central.';
 
                 trigger OnAction()
                 var
@@ -214,7 +215,7 @@ page 50100 "POAI Copilot Setup"
         CanClearApiKey: Boolean;
         ConfiguredKeyTxt: Label 'Configured (stored in Isolated Storage)';
         MissingKeyTxt: Label 'Not configured';
-        CapabilitySyncedMsg: Label 'PO Approval Change Summary capability is registered and synced.';
+        CapabilitySyncedMsg: Label 'Purchase Order Approval Change Summary capability is registered and synced.';
         ConnectionSuccessMsg: Label 'Azure OpenAI connection succeeded. Model replied: %1', Comment = '%1 = model reply';
         ConnectionFailedErr: Label 'Azure OpenAI connection test failed: %1', Comment = '%1 = error text';
         ConfirmClearKeyQst: Label 'Do you want to remove the stored Azure OpenAI API key from Isolated Storage?';

@@ -2,7 +2,7 @@ namespace DefaultPublisher.POAIApproval;
 
 table 50102 "POAI Approval Change Detail"
 {
-    Caption = 'PO Approval Change Detail';
+    Caption = 'Purchase Order Approval Change Detail';
     DataClassification = CustomerContent;
 
     fields

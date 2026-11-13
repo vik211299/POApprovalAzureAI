@@ -2,7 +2,7 @@ namespace DefaultPublisher.POAIApproval;
 
 enum 50100 "POAI Change Type"
 {
-    Caption = 'PO Approval Change Type';
+    Caption = 'Purchase Order Approval Change Type';
     Extensible = true;
 
     value(0; "Header Modified")
